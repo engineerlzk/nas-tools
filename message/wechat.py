@@ -1,13 +1,15 @@
-import sys
 from datetime import datetime
 import threading
 import requests
 
-from config import get_config
+import log
+from config import Config
+from utils.functions import singleton
 
 lock = threading.Lock()
 
 
+@singleton
 class WeChat(object):
     __instance = None
     __access_token = None
@@ -16,28 +18,20 @@ class WeChat(object):
 
     __corpid = None
     __corpsecret = None
-    __agentid = None
+    __agent_id = None
 
     def __init__(self):
-        config = get_config()
-        if config.get('message'):
-            self.__corpid = config['message'].get('wechat', {}).get('corpid')
-            self.__corpsecret = config['message'].get('wechat', {}).get('corpsecret')
-            self.__agent_id = config['message'].get('wechat', {}).get('agentid')
+        self.init_config()
+
+    def init_config(self):
+        config = Config()
+        message = config.get_config('message')
+        if message:
+            self.__corpid = message.get('wechat', {}).get('corpid')
+            self.__corpsecret = message.get('wechat', {}).get('corpsecret')
+            self.__agent_id = message.get('wechat', {}).get('agentid')
         if self.__corpid and self.__corpsecret and self.__agent_id:
             self.get_access_token()
-
-    @staticmethod
-    def get_instance():
-        if WeChat.__instance:
-            return WeChat.__instance
-        try:
-            lock.acquire()
-            if not WeChat.__instance:
-                WeChat.__instance = WeChat()
-        finally:
-            lock.release()
-        return WeChat.__instance
 
     def get_access_token(self):
         token_flag = True
@@ -51,30 +45,38 @@ class WeChat(object):
         if not token_flag:
             if not self.__corpid or not self.__corpsecret:
                 return None
-            token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s" \
-                        % (self.__corpid, self.__corpsecret)
-            res = requests.get(token_url)
-            if res:
-                ret_json = res.json()
-                if ret_json['errcode'] == 0:
-                    self.__access_token = ret_json['access_token']
-                    self.__expires_in = ret_json['expires_in']
-                    self.__access_token_time = datetime.now()
+            try:
+                token_url = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s" \
+                            % (self.__corpid, self.__corpsecret)
+                res = requests.get(token_url, timeout=10)
+                if res:
+                    ret_json = res.json()
+                    if ret_json['errcode'] == 0:
+                        self.__access_token = ret_json['access_token']
+                        self.__expires_in = ret_json['expires_in']
+                        self.__access_token_time = datetime.now()
+            except Exception as e:
+                log.console(str(e))
+                return None
         return self.__access_token
 
     # 发送文本消息
-    def send_message(self, title, text):
+    def send_message(self, title, text, user_id):
         message_url = 'https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s' % self.get_access_token()
         if not self.__agent_id:
             return False, "参数未配置"
         if text:
-            text = text.replace("\n\n", "\n")
+            conent = "%s\n%s" % (title, text.replace("\n\n", "\n"))
+        else:
+            conent = title
+        if not user_id:
+            user_id = "@all"
         req_json = {
-            "touser": "@all",
+            "touser": user_id,
             "msgtype": "text",
             "agentid": self.__agent_id,
             "text": {
-                "content": title + "\n\n" + text
+                "content": conent
             },
             "safe": 0,
             "enable_id_trans": 0,
@@ -95,15 +97,16 @@ class WeChat(object):
             return False, str(err)
 
     # 发送图文消息
-    def send_image_message(self, title, text, image_url):
+    def send_image_message(self, title, text, image_url, url, user_id):
         message_url = 'https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s' % self.get_access_token()
         if not self.__agent_id:
             return False, "参数未配置"
         if text:
             text = text.replace("\n\n", "\n")
-
+        if not user_id:
+            user_id = "@all"
         req_json = {
-            "touser": "@all",
+            "touser": user_id,
             "msgtype": "news",
             "agentid": self.__agent_id,
             "news": {
@@ -111,7 +114,8 @@ class WeChat(object):
                     {
                         "title": title,
                         "description": text,
-                        "picurl": image_url
+                        "picurl": image_url,
+                        "url": url
                     }
                 ]
             }
@@ -130,23 +134,11 @@ class WeChat(object):
         except Exception as err:
             return False, str(err)
 
-    def send_wechat_msg(self, title, text, image):
+    def send_wechat_msg(self, title, text, image, url, user_id):
         if not title and not text:
             return -1, "标题和内容不能同时为空"
         if image:
-            ret_code, ret_msg = self.send_image_message(title, text, image)
+            ret_code, ret_msg = self.send_image_message(title, text, image, url, user_id)
         else:
-            ret_code, ret_msg = self.send_message(title, text)
+            ret_code, ret_msg = self.send_message(title, text, user_id)
         return ret_code, ret_msg
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        in_title = sys.argv[1]
-    else:
-        in_title = "WeChat标题"
-    if len(sys.argv) > 2:
-        in_text = sys.argv[2]
-    else:
-        in_text = "WeChat内容"
-    WeChat.get_instance().send_wechat_msg(in_title, in_text, None)

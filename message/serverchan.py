@@ -1,16 +1,20 @@
-import sys
 from urllib.parse import urlencode
 import requests
-from config import get_config
+
+from config import Config
 
 
 class ServerChan:
     __sckey = None
 
     def __init__(self):
-        config = get_config()
-        if config.get('message'):
-            self.__sckey = config['message'].get('serverchan', {}).get('sckey')
+        self.init_config()
+
+    def init_config(self):
+        config = Config()
+        message = config.get_config('message')
+        if message:
+            self.__sckey = message.get('serverchan', {}).get('sckey')
 
     # 发送ServerChan消息
     def send_serverchan_msg(self, text, desp=""):
@@ -20,8 +24,8 @@ class ServerChan:
         try:
             if not self.__sckey:
                 return False, "参数未配置"
-            sc_url = "https://sctapi.ftqq.com/" + self.__sckey + ".send?" + urlencode(values)
-            res = requests.get(sc_url)
+            sc_url = "https://sctapi.ftqq.com/%s.send?%s" % (self.__sckey, urlencode(values))
+            res = requests.get(sc_url, timeout=10)
             if res:
                 ret_json = res.json()
                 errno = ret_json['code']
@@ -34,15 +38,3 @@ class ServerChan:
                 return False, "未获取到返回信息"
         except Exception as msg_e:
             return False, str(msg_e)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        in_title = sys.argv[1]
-    else:
-        in_title = "ServerChan标题"
-    if len(sys.argv) > 2:
-        in_text = sys.argv[2]
-    else:
-        in_text = "ServerChan内容"
-    ServerChan().send_serverchan_msg(in_title, in_text)
